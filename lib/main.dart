@@ -6,28 +6,20 @@ import 'package:firebase_auth/firebase_auth.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
-  runApp(const SchoolSupplyApp());
+  runApp(const SchoolSupplyStore());
 }
 
-class SchoolSupplyApp extends StatelessWidget {
-  const SchoolSupplyApp({super.key});
+class SchoolSupplyStore extends StatelessWidget {
+  const SchoolSupplyStore({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'School Supply Store',
+      title: 'School Supplies Store',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.blue,
-          foregroundColor: Colors.white,
-        ),
-        // Added custom PopupMenuTheme for hover and styling effects on Web/Desktop
-        popupMenuTheme: PopupMenuThemeData(
-  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-  elevation: 6,
-),
+        scaffoldBackgroundColor: Colors.grey[100],
       ),
       home: const AuthGate(),
     );
@@ -209,7 +201,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-// ----------------- CATALOG SCREEN -----------------
+// ----------------- CATALOG SCREEN (CUSTOMER SIDE) -----------------
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({super.key});
 
@@ -218,36 +210,20 @@ class CatalogScreen extends StatefulWidget {
 }
 
 class _CatalogScreenState extends State<CatalogScreen> {
-  final CollectionReference _productsCollection =
-      FirebaseFirestore.instance.collection('products');
+  String _selectedCategory = 'All';
+  String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
 
-  String _userRole = 'user';
-  bool _isLoadingRole = true;
+  final List<String> _categories = [
+    'All',
+    'Writing Instruments',
+    'Paper & Notebooks',
+    'Art Supplies',
+    'Desk Accessories',
+    'Calculators & Electronics',
+  ];
 
-  @override
-  void initState() {
-    super.initState();
-    _fetchUserRole();
-  }
-
-  Future<void> _fetchUserRole() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      try {
-        final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-        if (doc.exists && mounted) {
-          setState(() {
-            _userRole = doc.data()?['role'] ?? 'user';
-            _isLoadingRole = false;
-          });
-        }
-      } catch (e) {
-        if (mounted) setState(() => _isLoadingRole = false);
-      }
-    } else {
-      if (mounted) setState(() => _isLoadingRole = false);
-    }
-  }
+  final CollectionReference _productsCollection = FirebaseFirestore.instance.collection('products');
 
   Future<void> _addToCart(Map<String, dynamic> product) async {
     final user = FirebaseAuth.instance.currentUser;
@@ -328,7 +304,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
             SizedBox(height: 8),
             Text('Version: 1.0.0'),
             SizedBox(height: 8),
-            Text('Designed for seamless school supply shopping, inventory management, and academic project delivery.'),
+            Text('Designed for seamless school supply shopping and ordering.'),
           ],
         ),
         actions: [
@@ -341,67 +317,20 @@ class _CatalogScreenState extends State<CatalogScreen> {
     );
   }
 
-  void _showAddProductDialog(BuildContext context) {
-    final nameController = TextEditingController();
-    final priceController = TextEditingController();
-    final categoryController = TextEditingController();
-    final stockController = TextEditingController();
-    final descController = TextEditingController();
-    final imageController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add New Product (Admin)'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Product Name')),
-              TextField(controller: priceController, decoration: const InputDecoration(labelText: 'Price (₱)'), keyboardType: TextInputType.number),
-              TextField(controller: categoryController, decoration: const InputDecoration(labelText: 'Category')),
-              TextField(controller: stockController, decoration: const InputDecoration(labelText: 'Stock Quantity'), keyboardType: TextInputType.number),
-              TextField(controller: imageController, decoration: const InputDecoration(labelText: 'Image URL (Optional)')),
-              TextField(controller: descController, decoration: const InputDecoration(labelText: 'Description')),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              if (nameController.text.isNotEmpty && priceController.text.isNotEmpty) {
-                await FirebaseFirestore.instance.collection('products').add({
-                  'productName': nameController.text.trim(),
-                  'productPrice': double.tryParse(priceController.text) ?? 0.0,
-                  'category': categoryController.text.trim().isEmpty ? 'General' : categoryController.text.trim(),
-                  'stock': int.tryParse(stockController.text) ?? 0,
-                  'imageUrl': imageController.text.trim(),
-                  'description': descController.text.trim().isEmpty ? 'No description provided.' : descController.text.trim(),
-                });
-                if (!mounted) return;
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Product added successfully!'), backgroundColor: Colors.green),
-                );
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final currentUser = FirebaseAuth.instance.currentUser;
+
+    Query productsQuery = _productsCollection;
+    if (_selectedCategory != 'All') {
+      productsQuery = productsQuery.where('category', isEqualTo: _selectedCategory);
+    }
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('School Supplies Catalog'),
         actions: [
-          if (_userRole != 'admin' && currentUser != null)
+          if (currentUser != null)
             StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
                   .collection('users')
@@ -446,26 +375,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
               },
             ),
 
-          // Menu Popup
           PopupMenuButton<String>(
             icon: const Icon(Icons.menu),
             tooltip: 'Menu',
             onSelected: (value) {
               if (value == 'profile') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ProfileScreen()),
-                );
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfileScreen()));
               } else if (value == 'orders') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const OrderHistoryScreen()),
-                );
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const OrderHistoryScreen()));
               } else if (value == 'help') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const HelpScreen()),
-                );
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const HelpScreen()));
               } else if (value == 'about') {
                 _showAboutDialog(context);
               } else if (value == 'logout') {
@@ -481,188 +400,233 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
               ),
               const PopupMenuDivider(),
-              if (_userRole != 'admin') ...[
-                const PopupMenuItem<String>(
-                  value: 'profile',
-                  child: Row(
-                    children: [
-                      Icon(Icons.person, color: Colors.blue, size: 20),
-                      SizedBox(width: 8),
-                      Text('Profile & Shipping'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'orders',
-                  child: Row(
-                    children: [
-                      Icon(Icons.history, color: Colors.blue, size: 20),
-                      SizedBox(width: 8),
-                      Text('Order History'),
-                    ],
-                  ),
-                ),
-              ],
-              const PopupMenuItem<String>(
-                value: 'help',
-                child: Row(
-                  children: [
-                    Icon(Icons.help_outline, color: Colors.grey, size: 20),
-                    SizedBox(width: 8),
-                    Text('Help & FAQ'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem<String>(
-                value: 'about',
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, color: Colors.grey, size: 20),
-                    SizedBox(width: 8),
-                    Text('About App'),
-                  ],
-                ),
-              ),
+              const PopupMenuItem<String>(value: 'profile', child: Row(children: [Icon(Icons.person, color: Colors.blue, size: 20), SizedBox(width: 8), Text('Profile & Shipping')])),
+              const PopupMenuItem<String>(value: 'orders', child: Row(children: [Icon(Icons.history, color: Colors.blue, size: 20), SizedBox(width: 8), Text('Order History')])),
+              const PopupMenuItem<String>(value: 'help', child: Row(children: [Icon(Icons.help_outline, color: Colors.grey, size: 20), SizedBox(width: 8), Text('Help & FAQ')])),
+              const PopupMenuItem<String>(value: 'about', child: Row(children: [Icon(Icons.info_outline, color: Colors.grey, size: 20), SizedBox(width: 8), Text('About App')])),
               const PopupMenuDivider(),
-              const PopupMenuItem<String>(
-                value: 'logout',
-                child: Row(
-                  children: [
-                    Icon(Icons.logout, color: Colors.red, size: 20),
-                    SizedBox(width: 8),
-                    Text('Logout Account', style: TextStyle(color: Colors.red)),
-                  ],
-                ),
-              ),
+              const PopupMenuItem<String>(value: 'logout', child: Row(children: [Icon(Icons.logout, color: Colors.red, size: 20), SizedBox(width: 8), Text('Logout Account', style: TextStyle(color: Colors.red))])),
             ],
           ),
         ],
       ),
-      floatingActionButton: _isLoadingRole || _userRole != 'admin'
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: () => _showAddProductDialog(context),
-              backgroundColor: Colors.blue,
-              icon: const Icon(Icons.add, color: Colors.white),
-              label: const Text('Add Product', style: TextStyle(color: Colors.white)),
-            ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: _productsCollection.snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return const Center(
-              child: Text(
-                'No products in Firestore yet.\nAdd products via admin account!',
-                textAlign: TextAlign.center,
-              ),
-            );
-          }
-
-          final docs = snapshot.data!.docs;
-
-          return GridView.builder(
-            padding: const EdgeInsets.all(8.0),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              childAspectRatio: 0.68,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-            ),
-            itemCount: docs.length,
-            itemBuilder: (context, index) {
-              final data = docs[index].data() as Map<String, dynamic>;
-              
-              final price = data['productPrice'] ?? data['price'] ?? 0;
-              final name = data['productName'] ?? data['name'] ?? 'Unnamed Product';
-              final category = data['category'] ?? 'General';
-              final stock = data['stock'] ?? 0;
-              final imageUrl = data['imageUrl'] ?? '';
-              final description = data['description'] ?? 'No description available for this item.';
-
-              final productMap = {
-                'productId': docs[index].id,
-                'productName': name,
-                'productPrice': price,
-                'category': category,
-                'stock': stock,
-                'imageUrl': imageUrl,
-                'description': description,
-              };
-
-              return InkWell(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => ProductDetailScreen(
-                        product: productMap,
-                        onAddToCart: _addToCart,
+      body: Column(
+        children: [
+          // Search Input with Action Button
+          Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    onSubmitted: (value) {
+                      setState(() {
+                        _searchQuery = value.trim().toLowerCase();
+                      });
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Search school supplies...',
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: _searchController.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                setState(() {
+                                  _searchController.clear();
+                                  _searchQuery = '';
+                                });
+                                FocusScope.of(context).unfocus();
+                              },
+                            )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
                       ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.blue,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.send, color: Colors.white),
+                    onPressed: () {
+                      setState(() {
+                        _searchQuery = _searchController.text.trim().toLowerCase();
+                      });
+                      FocusScope.of(context).unfocus();
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Category Chips
+          SizedBox(
+            height: 50,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: _categories.length,
+              itemBuilder: (context, index) {
+                final category = _categories[index];
+                final isSelected = _selectedCategory == category;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8.0),
+                  child: ChoiceChip(
+                    label: Text(category),
+                    selected: isSelected,
+                    onSelected: (selected) {
+                      setState(() {
+                        _selectedCategory = category;
+                      });
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+          
+          const SizedBox(height: 8),
+
+          // Catalog Grid
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: productsQuery.snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'No products available right now.\nCheck back later!',
+                      textAlign: TextAlign.center,
                     ),
                   );
-                },
-                child: Card(
-                  elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Container(
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            color: Colors.grey[200],
-                            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                }
+
+                final docs = snapshot.data!.docs.where((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  final productName = (data['productName'] ?? data['name'] ?? '').toString().toLowerCase();
+                  return productName.contains(_searchQuery);
+                }).toList();
+
+                if (docs.isEmpty) {
+                  return const Center(child: Text('No matching products found.'));
+                }
+
+                return GridView.builder(
+                  padding: const EdgeInsets.all(8.0),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    childAspectRatio: 0.68,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemCount: docs.length,
+                  itemBuilder: (context, index) {
+                    final data = docs[index].data() as Map<String, dynamic>;
+                    
+                    final price = data['productPrice'] ?? data['price'] ?? 0;
+                    final name = data['productName'] ?? data['name'] ?? 'Unnamed Product';
+                    final category = data['category'] ?? 'General';
+                    final stock = data['stock'] ?? 0;
+                    final imageUrl = data['imageUrl'] ?? '';
+                    final description = data['description'] ?? 'No description available for this item.';
+
+                    final productMap = {
+                      'productId': docs[index].id,
+                      'productName': name,
+                      'productPrice': price,
+                      'category': category,
+                      'stock': stock,
+                      'imageUrl': imageUrl,
+                      'description': description,
+                    };
+
+                    return InkWell(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ProductDetailScreen(
+                              product: productMap,
+                              onAddToCart: _addToCart,
+                            ),
                           ),
-                          child: imageUrl.isNotEmpty
-                              ? Image.network(imageUrl, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.broken_image, size: 50, color: Colors.grey))
-                              : const Icon(Icons.inventory_2, size: 50, color: Colors.blue),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(8.0),
+                        );
+                      },
+                      child: Card(
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              name,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '₱$price',
-                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13),
-                            ),
-                            const SizedBox(height: 6),
-                            if (_userRole != 'admin')
-                              SizedBox(
+                            Expanded(
+                              child: Container(
                                 width: double.infinity,
-                                height: 30,
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.orange,
-                                    padding: EdgeInsets.zero,
-                                  ),
-                                  onPressed: () => _addToCart(productMap),
-                                  child: const Text('Add to Cart', style: TextStyle(fontSize: 11, color: Colors.white)),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[200],
+                                  borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
                                 ),
+                                child: imageUrl.isNotEmpty
+                                    ? Image.network(imageUrl, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.broken_image, size: 50, color: Colors.grey))
+                                    : const Icon(Icons.inventory_2, size: 50, color: Colors.blue),
                               ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    name,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '₱$price',
+                                    style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    height: 30,
+                                    child: ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.orange,
+                                        padding: EdgeInsets.zero,
+                                      ),
+                                      onPressed: () => _addToCart(productMap),
+                                      child: const Text('Add to Cart', style: TextStyle(fontSize: 11, color: Colors.white)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          );
-        },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -752,7 +716,7 @@ class ProductDetailScreen extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white,
               boxShadow: [
-                BoxShadow(color: Colors.black.withValues(alpha: 0.1), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, -3)),
+                BoxShadow(color: Colors.black.withOpacity(0.1), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, -3)),
               ],
             ),
             child: ElevatedButton(
