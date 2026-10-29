@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "1098948779592",
+    "firebase_url": "https://schoolsupplystore-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "schoolsupplystore",
+    "storage_bucket": "schoolsupplystore.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1098948779592:android:326d2aee299a40d1f6027d",
+        "android_client_info": {
+          "package_name": "com.josericardo.school_supply_store"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCCItshIDxKi28CWc9u_ZgRL6mV-t50Rfw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
