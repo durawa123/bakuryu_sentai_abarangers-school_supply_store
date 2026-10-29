@@ -23,6 +23,11 @@ class SchoolSupplyApp extends StatelessWidget {
           backgroundColor: Colors.blue,
           foregroundColor: Colors.white,
         ),
+        // Added custom PopupMenuTheme for hover and styling effects on Web/Desktop
+        popupMenuTheme: PopupMenuThemeData(
+  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+  elevation: 6,
+),
       ),
       home: const AuthGate(),
     );
@@ -404,7 +409,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   .collection('cart')
                   .snapshots(),
               builder: (context, snapshot) {
-                // Badge now counts unique cart item rows (types) instead of summing quantities
                 int cartCount = snapshot.hasData ? snapshot.data!.docs.length : 0;
 
                 return Stack(
@@ -748,7 +752,7 @@ class ProductDetailScreen extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white,
               boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.1), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, -3)),
+                BoxShadow(color: Colors.black.withValues(alpha: 0.1), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, -3)),
               ],
             ),
             child: ElevatedButton(
