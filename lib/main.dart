@@ -201,7 +201,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-// ----------------- CATALOG SCREEN WITH CART & RBAC -----------------
+// ----------------- CATALOG SCREEN WITH RESTRUCTURED APPBAR -----------------
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({super.key});
 
@@ -256,6 +256,31 @@ class _CatalogScreenState extends State<CatalogScreen> {
       SnackBar(
         content: Text('${product['productName']} added to cart!'),
         duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  // Logout confirmation dialog
+  void _confirmLogout(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logout Account'),
+        content: const Text('Are you sure you want to log out of your account?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await FirebaseAuth.instance.signOut();
+            },
+            child: const Text('Logout', style: TextStyle(color: Colors.white)),
+          ),
+        ],
       ),
     );
   }
@@ -320,19 +345,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
       appBar: AppBar(
         title: const Text('School Supplies Catalog'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-            },
-          ),
-          // Show Shopping Cart icon for regular users (or hide for admins if desired, currently available for users)
+          // 1. Swapped Cart to the left of the Menu button (for regular users)
           if (_userRole != 'admin')
             Stack(
               children: [
                 IconButton(
                   icon: const Icon(Icons.shopping_cart),
+                  tooltip: 'Shopping Cart',
                   onPressed: () {
                     Navigator.push(
                       context,
@@ -384,6 +403,37 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   ),
               ],
             ),
+
+          // 2. Replaced Logout button with a Menu popup anchor
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.menu),
+            tooltip: 'Menu',
+            onSelected: (value) {
+              if (value == 'logout') {
+                _confirmLogout(context); // 3. Trigger confirmation popup
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              PopupMenuItem<String>(
+                enabled: false,
+                child: Text(
+                  currentUser?.email ?? 'Account',
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout, color: Colors.red, size: 20),
+                    SizedBox(width: 8),
+                    Text('Logout Account', style: TextStyle(color: Colors.red)),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       floatingActionButton: _isLoadingRole || _userRole != 'admin'
@@ -506,7 +556,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   }
 }
 
-// ----------------- PRODUCT DETAIL SCREEN (With Add to Cart) -----------------
+// ----------------- PRODUCT DETAIL SCREEN -----------------
 class ProductDetailScreen extends StatelessWidget {
   final Map<String, dynamic> product;
   final Function(Map<String, dynamic>) onAddToCart;
