@@ -151,6 +151,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await FirebaseFirestore.instance.collection('users').doc(userCredential.user!.uid).set({
         'email': _emailController.text.trim(),
         'role': 'user',
+        'fullName': '',
+        'phone': '',
+        'address': '',
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -201,7 +204,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-// ----------------- CATALOG SCREEN WITH RESTRUCTURED APPBAR -----------------
+// ----------------- CATALOG SCREEN -----------------
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({super.key});
 
@@ -213,7 +216,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
   final CollectionReference _productsCollection =
       FirebaseFirestore.instance.collection('products');
 
-  final List<Map<String, dynamic>> _cart = [];
   String _userRole = 'user';
   bool _isLoadingRole = true;
 
@@ -242,25 +244,48 @@ class _CatalogScreenState extends State<CatalogScreen> {
     }
   }
 
-  void _addToCart(Map<String, dynamic> product) {
-    setState(() {
-      _cart.add({
-        'productName': product['productName'],
-        'productPrice': product['productPrice'],
-        'category': product['category'],
-        'imageUrl': product['imageUrl'],
-        'isSelected': true,
-      });
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${product['productName']} added to cart!'),
-        duration: const Duration(seconds: 1),
-      ),
-    );
+  Future<void> _addToCart(Map<String, dynamic> product) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final cartRef = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('cart');
+
+    final productId = product['productId'] ?? product['productName'];
+
+    try {
+      final querySnapshot = await cartRef.where('productName', isEqualTo: product['productName']).get();
+
+      if (querySnapshot.docs.isNotEmpty) {
+        final docId = querySnapshot.docs.first.id;
+        final currentQty = querySnapshot.docs.first.data()['quantity'] ?? 1;
+        await cartRef.doc(docId).update({'quantity': currentQty + 1});
+      } else {
+        await cartRef.add({
+          'productId': productId,
+          'productName': product['productName'],
+          'productPrice': product['productPrice'],
+          'category': product['category'],
+          'imageUrl': product['imageUrl'],
+          'quantity': 1,
+          'isSelected': true,
+        });
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${product['productName']} added to cart!'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error adding to cart: $e');
+    }
   }
 
-  // Logout confirmation dialog
   void _confirmLogout(BuildContext context) {
     showDialog(
       context: context,
@@ -279,6 +304,32 @@ class _CatalogScreenState extends State<CatalogScreen> {
               await FirebaseAuth.instance.signOut();
             },
             child: const Text('Logout', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAboutDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('About App'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('School Supply Store Catalog & Ordering App', style: TextStyle(fontWeight: FontWeight.bold)),
+            SizedBox(height: 8),
+            Text('Version: 1.0.0'),
+            SizedBox(height: 8),
+            Text('Designed for seamless school supply shopping, inventory management, and academic project delivery.'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
           ),
         ],
       ),
@@ -345,72 +396,76 @@ class _CatalogScreenState extends State<CatalogScreen> {
       appBar: AppBar(
         title: const Text('School Supplies Catalog'),
         actions: [
-          // 1. Swapped Cart to the left of the Menu button (for regular users)
-          if (_userRole != 'admin')
-            Stack(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.shopping_cart),
-                  tooltip: 'Shopping Cart',
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => CartScreen(
-                          cartItems: _cart,
-                          onCheckout: (selectedItems, totalAmount) async {
-                            try {
-                              await FirebaseFirestore.instance.collection('orders').add({
-                                'userId': currentUser?.uid ?? 'guest',
-                                'userEmail': currentUser?.email ?? 'unknown',
-                                'items': selectedItems,
-                                'total': totalAmount,
-                                'status': 'Pending',
-                                'timestamp': FieldValue.serverTimestamp(),
-                              });
+          if (_userRole != 'admin' && currentUser != null)
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(currentUser.uid)
+                  .collection('cart')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                // Badge now counts unique cart item rows (types) instead of summing quantities
+                int cartCount = snapshot.hasData ? snapshot.data!.docs.length : 0;
 
-                              if (!mounted) return;
-
-                              setState(() {
-                                _cart.removeWhere((item) => selectedItems.contains(item));
-                              });
-                            } catch (e) {
-                              debugPrint('Error saving order: $e');
-                            }
-                          },
+                return Stack(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.shopping_cart),
+                      tooltip: 'Shopping Cart',
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const CartScreen()),
+                        );
+                      },
+                    ),
+                    if (cartCount > 0)
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                          child: Text(
+                            '$cartCount',
+                            style: const TextStyle(color: Colors.white, fontSize: 10),
+                            textAlign: TextAlign.center,
+                          ),
                         ),
                       ),
-                    );
-                  },
-                ),
-                if (_cart.isNotEmpty)
-                  Positioned(
-                    right: 8,
-                    top: 8,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-                      child: Text(
-                        '${_cart.length}',
-                        style: const TextStyle(color: Colors.white, fontSize: 10),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-              ],
+                  ],
+                );
+              },
             ),
 
-          // 2. Replaced Logout button with a Menu popup anchor
+          // Menu Popup
           PopupMenuButton<String>(
             icon: const Icon(Icons.menu),
             tooltip: 'Menu',
             onSelected: (value) {
-              if (value == 'logout') {
-                _confirmLogout(context); // 3. Trigger confirmation popup
+              if (value == 'profile') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ProfileScreen()),
+                );
+              } else if (value == 'orders') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const OrderHistoryScreen()),
+                );
+              } else if (value == 'help') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HelpScreen()),
+                );
+              } else if (value == 'about') {
+                _showAboutDialog(context);
+              } else if (value == 'logout') {
+                _confirmLogout(context);
               }
             },
             itemBuilder: (BuildContext context) => [
@@ -419,6 +474,49 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 child: Text(
                   currentUser?.email ?? 'Account',
                   style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
+                ),
+              ),
+              const PopupMenuDivider(),
+              if (_userRole != 'admin') ...[
+                const PopupMenuItem<String>(
+                  value: 'profile',
+                  child: Row(
+                    children: [
+                      Icon(Icons.person, color: Colors.blue, size: 20),
+                      SizedBox(width: 8),
+                      Text('Profile & Shipping'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'orders',
+                  child: Row(
+                    children: [
+                      Icon(Icons.history, color: Colors.blue, size: 20),
+                      SizedBox(width: 8),
+                      Text('Order History'),
+                    ],
+                  ),
+                ),
+              ],
+              const PopupMenuItem<String>(
+                value: 'help',
+                child: Row(
+                  children: [
+                    Icon(Icons.help_outline, color: Colors.grey, size: 20),
+                    SizedBox(width: 8),
+                    Text('Help & FAQ'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'about',
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.grey, size: 20),
+                    SizedBox(width: 8),
+                    Text('About App'),
+                  ],
                 ),
               ),
               const PopupMenuDivider(),
@@ -466,7 +564,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
             padding: const EdgeInsets.all(8.0),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
-              childAspectRatio: 0.75,
+              childAspectRatio: 0.68,
               crossAxisSpacing: 8,
               mainAxisSpacing: 8,
             ),
@@ -482,6 +580,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
               final description = data['description'] ?? 'No description available for this item.';
 
               final productMap = {
+                'productId': docs[index].id,
                 'productName': name,
                 'productPrice': price,
                 'category': category,
@@ -527,20 +626,29 @@ class _CatalogScreenState extends State<CatalogScreen> {
                           children: [
                             Text(
                               name,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '₱$price',
-                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 14),
-                            ),
                             const SizedBox(height: 2),
                             Text(
-                              'Stock: $stock',
-                              style: TextStyle(color: Colors.grey[600], fontSize: 11),
+                              '₱$price',
+                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13),
                             ),
+                            const SizedBox(height: 6),
+                            if (_userRole != 'admin')
+                              SizedBox(
+                                width: double.infinity,
+                                height: 30,
+                                child: ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.orange,
+                                    padding: EdgeInsets.zero,
+                                  ),
+                                  onPressed: () => _addToCart(productMap),
+                                  child: const Text('Add to Cart', style: TextStyle(fontSize: 11, color: Colors.white)),
+                                ),
+                              ),
                           ],
                         ),
                       ),
@@ -559,7 +667,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
 // ----------------- PRODUCT DETAIL SCREEN -----------------
 class ProductDetailScreen extends StatelessWidget {
   final Map<String, dynamic> product;
-  final Function(Map<String, dynamic>) onAddToCart;
+  final Future<void> Function(Map<String, dynamic>) onAddToCart;
 
   const ProductDetailScreen({
     super.key,
@@ -648,8 +756,9 @@ class ProductDetailScreen extends StatelessWidget {
                 backgroundColor: Colors.orange,
                 minimumSize: const Size.fromHeight(50),
               ),
-              onPressed: () {
-                onAddToCart(product);
+              onPressed: () async {
+                await onAddToCart(product);
+                if (!context.mounted) return;
                 Navigator.pop(context);
               },
               child: const Text('Add to Cart', style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
@@ -662,106 +771,157 @@ class ProductDetailScreen extends StatelessWidget {
 }
 
 // ----------------- CART SCREEN -----------------
-class CartScreen extends StatefulWidget {
-  final List<Map<String, dynamic>> cartItems;
-  final Future<void> Function(List<Map<String, dynamic>>, double) onCheckout;
+class CartScreen extends StatelessWidget {
+  const CartScreen({super.key});
 
-  const CartScreen({
-    super.key,
-    required this.cartItems,
-    required this.onCheckout,
-  });
-
-  @override
-  State<CartScreen> createState() => _CartScreenState();
-}
-
-class _CartScreenState extends State<CartScreen> {
   @override
   Widget build(BuildContext context) {
-    double totalAmount = widget.cartItems.fold(0.0, (acc, item) {
-      if (item['isSelected'] == true) {
-        final price = double.tryParse(item['productPrice'].toString()) ?? 0.0;
-        return acc + price;
-      }
-      return acc;
-    });
+    final currentUser = FirebaseAuth.instance.currentUser;
+
+    if (currentUser == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('My Shopping Cart')),
+        body: const Center(child: Text('Please log in to view your cart.')),
+      );
+    }
+
+    final cartCollection = FirebaseFirestore.instance
+        .collection('users')
+        .doc(currentUser.uid)
+        .collection('cart');
 
     return Scaffold(
       appBar: AppBar(title: const Text('My Shopping Cart')),
-      body: widget.cartItems.isEmpty
-          ? const Center(
+      body: StreamBuilder<QuerySnapshot>(
+        stream: cartCollection.snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return const Center(
               child: Text('Your cart is empty!', style: TextStyle(fontSize: 18, color: Colors.grey)),
-            )
-          : Column(
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: widget.cartItems.length,
-                    itemBuilder: (context, index) {
-                      final item = widget.cartItems[index];
-                      bool isSelected = item['isSelected'] ?? true;
+            );
+          }
 
-                      return Card(
-                        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        child: ListTile(
-                          leading: Checkbox(
-                            value: isSelected,
-                            onChanged: (bool? value) {
-                              setState(() {
-                                item['isSelected'] = value ?? false;
-                              });
-                            },
-                          ),
-                          title: Text(item['productName'] ?? ''),
-                          subtitle: Text('₱${item['productPrice']}'),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            tooltip: 'Remove item',
-                            onPressed: () {
-                              setState(() {
-                                widget.cartItems.removeAt(index);
-                              });
-                            },
-                          ),
+          final cartDocs = snapshot.data!.docs;
+
+          double totalAmount = 0.0;
+          for (var doc in cartDocs) {
+            final data = doc.data() as Map<String, dynamic>;
+            if (data['isSelected'] == true) {
+              final price = double.tryParse(data['productPrice'].toString()) ?? 0.0;
+              final qty = data['quantity'] ?? 1;
+              totalAmount += price * qty;
+            }
+          }
+
+          return Column(
+            children: [
+              Expanded(
+                child: ListView.builder(
+                  itemCount: cartDocs.length,
+                  itemBuilder: (context, index) {
+                    final doc = cartDocs[index];
+                    final item = doc.data() as Map<String, dynamic>;
+                    bool isSelected = item['isSelected'] ?? true;
+                    int quantity = item['quantity'] ?? 1;
+                    final price = double.tryParse(item['productPrice'].toString()) ?? 0.0;
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: ListTile(
+                        leading: Checkbox(
+                          value: isSelected,
+                          onChanged: (bool? value) {
+                            cartCollection.doc(doc.id).update({'isSelected': value ?? false});
+                          },
                         ),
-                      );
-                    },
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.all(16.0),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    border: const Border(top: BorderSide(color: Colors.grey, width: 0.5)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Total:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          Text(
-                            '₱${totalAmount.toStringAsFixed(2)}',
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green),
-                          ),
-                        ],
+                        title: Text(item['productName'] ?? ''),
+                        subtitle: Text('₱$price x $quantity = ₱${price * quantity}'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.remove_circle_outline, size: 20),
+                              onPressed: () async {
+                                if (quantity > 1) {
+                                  await cartCollection.doc(doc.id).update({'quantity': quantity - 1});
+                                } else {
+                                  await cartCollection.doc(doc.id).delete();
+                                }
+                              },
+                            ),
+                            Text('$quantity', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            IconButton(
+                              icon: const Icon(Icons.add_circle_outline, size: 20),
+                              onPressed: () async {
+                                await cartCollection.doc(doc.id).update({'quantity': quantity + 1});
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              tooltip: 'Remove item',
+                              onPressed: () async {
+                                await cartCollection.doc(doc.id).delete();
+                              },
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 12),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          minimumSize: const Size.fromHeight(50),
+                    );
+                  },
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(16.0),
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  border: const Border(top: BorderSide(color: Colors.grey, width: 0.5)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Total:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        Text(
+                          '₱${totalAmount.toStringAsFixed(2)}',
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green),
                         ),
-                        onPressed: totalAmount == 0
-                            ? null
-                            : () async {
-                                final selectedItems = widget.cartItems
-                                    .where((item) => item['isSelected'] == true)
-                                    .toList();
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        minimumSize: const Size.fromHeight(50),
+                      ),
+                      onPressed: totalAmount == 0
+                          ? null
+                          : () async {
+                              final selectedDocs = cartDocs.where((doc) {
+                                final data = doc.data() as Map<String, dynamic>;
+                                return data['isSelected'] == true;
+                              }).toList();
 
-                                await widget.onCheckout(selectedItems, totalAmount);
+                              final selectedItems = selectedDocs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+
+                              try {
+                                await FirebaseFirestore.instance.collection('orders').add({
+                                  'userId': currentUser.uid,
+                                  'userEmail': currentUser.email ?? 'unknown',
+                                  'items': selectedItems,
+                                  'total': totalAmount,
+                                  'status': 'Pending',
+                                  'timestamp': FieldValue.serverTimestamp(),
+                                });
+
+                                for (var doc in selectedDocs) {
+                                  await cartCollection.doc(doc.id).delete();
+                                }
 
                                 if (!context.mounted) return;
 
@@ -770,7 +930,7 @@ class _CartScreenState extends State<CartScreen> {
                                   builder: (ctx) => AlertDialog(
                                     title: const Text('Order Placed Successfully!'),
                                     content: Text(
-                                      'Your order for ${selectedItems.length} item(s) has been saved to Firestore!',
+                                      'Your order for ${selectedItems.length} item type(s) has been saved to Firestore!',
                                     ),
                                     actions: [
                                       TextButton(
@@ -783,14 +943,229 @@ class _CartScreenState extends State<CartScreen> {
                                     ],
                                   ),
                                 );
-                              },
-                        child: const Text('Proceed to Checkout', style: TextStyle(fontSize: 16, color: Colors.white)),
-                      ),
-                    ],
-                  ),
+                              } catch (e) {
+                                debugPrint('Error saving order: $e');
+                              }
+                            },
+                      child: const Text('Proceed to Checkout', style: TextStyle(fontSize: 16, color: Colors.white)),
+                    ),
+                  ],
                 ),
-              ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ----------------- PROFILE & SHIPPING SCREEN -----------------
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _addressController = TextEditingController();
+  bool _isLoading = true;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  Future<void> _loadUserProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      if (doc.exists && mounted) {
+        final data = doc.data() as Map<String, dynamic>;
+        _nameController.text = data['fullName'] ?? '';
+        _phoneController.text = data['phone'] ?? '';
+        _addressController.text = data['address'] ?? '';
+      }
+    }
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  Future<void> _saveProfile() async {
+    setState(() => _isSaving = true);
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+        'fullName': _nameController.text.trim(),
+        'phone': _phoneController.text.trim(),
+        'address': _addressController.text.trim(),
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile updated successfully!'), backgroundColor: Colors.green),
+      );
+    }
+    if (mounted) setState(() => _isSaving = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Profile & Shipping Info')),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: ListView(
+                children: [
+                  const Text('Manage your shipping details for faster checkouts.', style: TextStyle(color: Colors.grey)),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: _nameController,
+                    decoration: const InputDecoration(labelText: 'Full Name', border: OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _phoneController,
+                    decoration: const InputDecoration(labelText: 'Phone Number', border: OutlineInputBorder()),
+                    keyboardType: TextInputType.phone,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _addressController,
+                    decoration: const InputDecoration(labelText: 'Shipping Address', border: OutlineInputBorder()),
+                    maxLines: 3,
+                  ),
+                  const SizedBox(height: 20),
+                  _isSaving
+                      ? const Center(child: CircularProgressIndicator())
+                      : ElevatedButton(
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, minimumSize: const Size.fromHeight(50)),
+                          onPressed: _saveProfile,
+                          child: const Text('Save Profile', style: TextStyle(fontSize: 16, color: Colors.white)),
+                        ),
+                ],
+              ),
             ),
+    );
+  }
+}
+
+// ----------------- ORDER HISTORY SCREEN -----------------
+class OrderHistoryScreen extends StatelessWidget {
+  const OrderHistoryScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final currentUser = FirebaseAuth.instance.currentUser;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('My Order History')),
+      body: currentUser == null
+          ? const Center(child: Text('Please log in to view order history.'))
+          : StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('orders')
+                  .where('userId', isEqualTo: currentUser.uid)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'No order history found.\nPlace an order from your cart!',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 16, color: Colors.grey),
+                    ),
+                  );
+                }
+
+                final orderDocs = snapshot.data!.docs;
+
+                return ListView.builder(
+                  itemCount: orderDocs.length,
+                  itemBuilder: (context, index) {
+                    final orderData = orderDocs[index].data() as Map<String, dynamic>;
+                    final total = orderData['total'] ?? 0.0;
+                    final status = orderData['status'] ?? 'Pending';
+                    final items = orderData['items'] as List<dynamic>? ?? [];
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      child: ExpansionTile(
+                        title: Text(
+                          'Order #${orderDocs[index].id.substring(0, 6).toUpperCase()}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text('Total: ₱$total • Status: $status'),
+                        trailing: Chip(
+                          label: Text(status, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                          backgroundColor: status == 'Pending' ? Colors.orange : Colors.green,
+                        ),
+                        children: items.map<Widget>((item) {
+                          return ListTile(
+                            dense: true,
+                            title: Text(item['productName'] ?? 'Item'),
+                            trailing: Text('₱${item['productPrice']} x ${item['quantity'] ?? 1}'),
+                          );
+                        }).toList(),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+    );
+  }
+}
+
+// ----------------- HELP & FAQ SCREEN -----------------
+class HelpScreen extends StatelessWidget {
+  const HelpScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Help & FAQ')),
+      body: ListView(
+        padding: const EdgeInsets.all(16.0),
+        children: const [
+          ExpansionTile(
+            title: Text('How do I place an order?'),
+            children: [
+              Padding(
+                padding: EdgeInsets.all(8.0),
+                child: Text('Browse the catalog, tap "Add to Cart" directly on any item, or view its description first. Go to your cart from the top right, review quantities, and tap "Proceed to Checkout".'),
+              ),
+            ],
+          ),
+          ExpansionTile(
+            title: Text('How can I track my orders?'),
+            children: [
+              Padding(
+                padding: EdgeInsets.all(8.0),
+                child: Text('Open the menu in the top right corner and tap on "Order History" to view all your past purchases and their real-time statuses.'),
+              ),
+            ],
+          ),
+          ExpansionTile(
+            title: Text('Store Contact & Hours'),
+            children: [
+              Padding(
+                padding: EdgeInsets.all(8.0),
+                child: Text('Email: support@schoolsupplystore.com\nHours: Monday - Friday, 8:00 AM - 5:00 PM'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
