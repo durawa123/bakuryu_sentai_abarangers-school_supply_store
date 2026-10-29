@@ -201,7 +201,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-// ----------------- CATALOG SCREEN (Catalog & Viewer Only) -----------------
+// ----------------- CATALOG SCREEN WITH CART & RBAC -----------------
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({super.key});
 
@@ -213,6 +213,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   final CollectionReference _productsCollection =
       FirebaseFirestore.instance.collection('products');
 
+  final List<Map<String, dynamic>> _cart = [];
   String _userRole = 'user';
   bool _isLoadingRole = true;
 
@@ -239,6 +240,24 @@ class _CatalogScreenState extends State<CatalogScreen> {
     } else {
       if (mounted) setState(() => _isLoadingRole = false);
     }
+  }
+
+  void _addToCart(Map<String, dynamic> product) {
+    setState(() {
+      _cart.add({
+        'productName': product['productName'],
+        'productPrice': product['productPrice'],
+        'category': product['category'],
+        'imageUrl': product['imageUrl'],
+        'isSelected': true,
+      });
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${product['productName']} added to cart!'),
+        duration: const Duration(seconds: 1),
+      ),
+    );
   }
 
   void _showAddProductDialog(BuildContext context) {
@@ -295,6 +314,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final currentUser = FirebaseAuth.instance.currentUser;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('School Supplies Catalog'),
@@ -306,6 +327,63 @@ class _CatalogScreenState extends State<CatalogScreen> {
               await FirebaseAuth.instance.signOut();
             },
           ),
+          // Show Shopping Cart icon for regular users (or hide for admins if desired, currently available for users)
+          if (_userRole != 'admin')
+            Stack(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.shopping_cart),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => CartScreen(
+                          cartItems: _cart,
+                          onCheckout: (selectedItems, totalAmount) async {
+                            try {
+                              await FirebaseFirestore.instance.collection('orders').add({
+                                'userId': currentUser?.uid ?? 'guest',
+                                'userEmail': currentUser?.email ?? 'unknown',
+                                'items': selectedItems,
+                                'total': totalAmount,
+                                'status': 'Pending',
+                                'timestamp': FieldValue.serverTimestamp(),
+                              });
+
+                              if (!mounted) return;
+
+                              setState(() {
+                                _cart.removeWhere((item) => selectedItems.contains(item));
+                              });
+                            } catch (e) {
+                              debugPrint('Error saving order: $e');
+                            }
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                if (_cart.isNotEmpty)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                      child: Text(
+                        '${_cart.length}',
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
         ],
       ),
       floatingActionButton: _isLoadingRole || _userRole != 'admin'
@@ -326,7 +404,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
             return const Center(
               child: Text(
-                'No products in Firestore yet.\nChange your role to "admin" in Firebase to add products!',
+                'No products in Firestore yet.\nAdd products via admin account!',
                 textAlign: TextAlign.center,
               ),
             );
@@ -369,6 +447,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                     MaterialPageRoute(
                       builder: (context) => ProductDetailScreen(
                         product: productMap,
+                        onAddToCart: _addToCart,
                       ),
                     ),
                   );
@@ -427,13 +506,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
   }
 }
 
-// ----------------- PRODUCT DETAIL SCREEN (Viewer Only) -----------------
+// ----------------- PRODUCT DETAIL SCREEN (With Add to Cart) -----------------
 class ProductDetailScreen extends StatelessWidget {
   final Map<String, dynamic> product;
+  final Function(Map<String, dynamic>) onAddToCart;
 
   const ProductDetailScreen({
     super.key,
     required this.product,
+    required this.onAddToCart,
   });
 
   @override
@@ -442,64 +523,224 @@ class ProductDetailScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(title: Text(product['productName'])),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              height: 300,
-              width: double.infinity,
-              child: imageUrl.isNotEmpty
-                  ? Image.network(imageUrl, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.broken_image, size: 80, color: Colors.grey))
-                  : Container(
-                      color: Colors.grey[200],
-                      child: const Icon(Icons.inventory_2, size: 100, color: Colors.blue),
-                    ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16.0),
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    product['productName'],
-                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  SizedBox(
+                    height: 280,
+                    width: double.infinity,
+                    child: imageUrl.isNotEmpty
+                        ? Image.network(imageUrl, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.broken_image, size: 80, color: Colors.grey))
+                        : Container(
+                            color: Colors.grey[200],
+                            child: const Icon(Icons.inventory_2, size: 100, color: Colors.blue),
+                          ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '₱${product['productPrice']}',
-                    style: const TextStyle(fontSize: 20, color: Colors.green, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Chip(
-                        label: Text('Category: ${product['category']}'),
-                        backgroundColor: Colors.blue.shade50,
-                      ),
-                      const SizedBox(width: 8),
-                      Chip(
-                        label: Text('Stock: ${product['stock']}'),
-                        backgroundColor: Colors.green.shade50,
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 32),
-                  const Text(
-                    'Product Description',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    product['description'],
-                    style: TextStyle(fontSize: 14, color: Colors.grey[700], height: 1.4),
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          product['productName'],
+                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '₱${product['productPrice']}',
+                          style: const TextStyle(fontSize: 20, color: Colors.green, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Chip(
+                              label: Text('Category: ${product['category']}'),
+                              backgroundColor: Colors.blue.shade50,
+                            ),
+                            const SizedBox(width: 8),
+                            Chip(
+                              label: Text('Stock: ${product['stock']}'),
+                              backgroundColor: Colors.green.shade50,
+                            ),
+                          ],
+                        ),
+                        const Divider(height: 32),
+                        const Text(
+                          'Product Description',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          product['description'],
+                          style: TextStyle(fontSize: 14, color: Colors.grey[700], height: 1.4),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(color: Colors.black.withOpacity(0.1), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, -3)),
+              ],
+            ),
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                minimumSize: const Size.fromHeight(50),
+              ),
+              onPressed: () {
+                onAddToCart(product);
+                Navigator.pop(context);
+              },
+              child: const Text('Add to Cart', style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+// ----------------- CART SCREEN -----------------
+class CartScreen extends StatefulWidget {
+  final List<Map<String, dynamic>> cartItems;
+  final Future<void> Function(List<Map<String, dynamic>>, double) onCheckout;
+
+  const CartScreen({
+    super.key,
+    required this.cartItems,
+    required this.onCheckout,
+  });
+
+  @override
+  State<CartScreen> createState() => _CartScreenState();
+}
+
+class _CartScreenState extends State<CartScreen> {
+  @override
+  Widget build(BuildContext context) {
+    double totalAmount = widget.cartItems.fold(0.0, (acc, item) {
+      if (item['isSelected'] == true) {
+        final price = double.tryParse(item['productPrice'].toString()) ?? 0.0;
+        return acc + price;
+      }
+      return acc;
+    });
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('My Shopping Cart')),
+      body: widget.cartItems.isEmpty
+          ? const Center(
+              child: Text('Your cart is empty!', style: TextStyle(fontSize: 18, color: Colors.grey)),
+            )
+          : Column(
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: widget.cartItems.length,
+                    itemBuilder: (context, index) {
+                      final item = widget.cartItems[index];
+                      bool isSelected = item['isSelected'] ?? true;
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: ListTile(
+                          leading: Checkbox(
+                            value: isSelected,
+                            onChanged: (bool? value) {
+                              setState(() {
+                                item['isSelected'] = value ?? false;
+                              });
+                            },
+                          ),
+                          title: Text(item['productName'] ?? ''),
+                          subtitle: Text('₱${item['productPrice']}'),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            tooltip: 'Remove item',
+                            onPressed: () {
+                              setState(() {
+                                widget.cartItems.removeAt(index);
+                              });
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.all(16.0),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    border: const Border(top: BorderSide(color: Colors.grey, width: 0.5)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Total:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text(
+                            '₱${totalAmount.toStringAsFixed(2)}',
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          minimumSize: const Size.fromHeight(50),
+                        ),
+                        onPressed: totalAmount == 0
+                            ? null
+                            : () async {
+                                final selectedItems = widget.cartItems
+                                    .where((item) => item['isSelected'] == true)
+                                    .toList();
+
+                                await widget.onCheckout(selectedItems, totalAmount);
+
+                                if (!context.mounted) return;
+
+                                showDialog(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text('Order Placed Successfully!'),
+                                    content: Text(
+                                      'Your order for ${selectedItems.length} item(s) has been saved to Firestore!',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () {
+                                          Navigator.of(ctx).pop();
+                                          Navigator.of(context).pop();
+                                        },
+                                        child: const Text('OK'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                        child: const Text('Proceed to Checkout', style: TextStyle(fontSize: 16, color: Colors.white)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }
